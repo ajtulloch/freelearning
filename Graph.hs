@@ -13,10 +13,12 @@ import qualified Data.HashMap.Strict               as HM
 import           Data.Maybe
 import           System.Process
 
+import           Text.Printf
+
 import           Layers
 
-type G = Gr Layer ()
-type GS = State (Int, G)
+type G = Gr Layer
+type GS = State (Int, G ())
 
 layer :: Layer -> GS Int
 layer l = do
@@ -49,42 +51,64 @@ fork columns = do
 
   return (splitId, joinId)
 
-toGraph :: GS a -> G
+toGraph :: GS a -> G ()
 toGraph f = snd (execState f (0, empty))
 
-activation :: G -> Node -> State (HM.HashMap Int [Float]) (Layer, [Float])
-activation graph gid = do
+type EdgeActivations = HM.HashMap (Int, Int) [Float]
+
+updateActivation :: G a -> Node -> State EdgeActivations ()
+updateActivation graph gid = do
   let inputIds = pre graph gid
   let l = fromJust (lab graph gid)
   acts <- get
-  let inputActs = map (\k -> fromJust (HM.lookup k acts)) inputIds
-  let outputActivation = fprop l (concat inputActs)
-  put (HM.insert gid outputActivation acts)
-  return (l, outputActivation)
+  let inputActs = map (\k -> fromJust (HM.lookup (k, gid) acts)) inputIds
+  let outputAct = fprop l (concat inputActs)
+  put (setOutgoingActivations graph gid outputAct acts)
 
-activations :: G -> [Float]  -> [(Layer, [Float])]
-activations graph input = evalState (mapM step layers) (HM.singleton inputLayer input)
+setOutgoingActivations :: G a -> Node -> [Float] -> EdgeActivations -> EdgeActivations
+setOutgoingActivations graph gid outputAct acts = foldl step acts outputIds where
+    outputIds = suc graph gid
+    step m outputId = HM.insert (gid, outputId) outputAct m
+
+
+updateEdges :: G a -> EdgeActivations -> G [Float]
+updateEdges graph acts = gmap update graph
+    where
+      update :: (Context Layer a -> Context Layer [Float])
+      update (pre, gid, l, suc) = (newpre, gid, l, newsucc)
+          where
+            newpre = map (\(a, preId) -> (actAt acts preId gid, preId)) pre
+            newsucc = map (\(a, succId) -> (actAt acts gid succId, succId)) suc
+
+actAt :: EdgeActivations -> Node -> Node -> [Float]
+actAt acts from to = fromJust (HM.lookup (from, to) acts)
+
+activations :: G a -> [Float] -> EdgeActivations
+activations graph input = execState (mapM step layers) initialState
     where
       (inputLayer:layers) = topsort graph
-      step = activation graph
+      step = updateActivation graph
+      initialState :: EdgeActivations
+      initialState = setOutgoingActivations graph inputLayer input HM.empty
 
-simpleNet :: G
+simpleNet :: G ()
 simpleNet = toGraph $
             column [Input,
                     FC [[1.0, 1.0], [-1.0, -1.0]], ReLU,
                     FC [[1.0, 1.0], [-1.0, -1.0]], ReLU,
                     LogSoftMax]
 
-main :: IO ()
+-- main :: IO ()
 main = do
-  mapM_ (print . first P) $ activations alexNet [1.0, 2.0]
-  let dot = (showDot . fglToDotString . emap (const "") . nmap (show . P)) alexNet
+  -- mapM_ (print . first P) $ activations alexNet [1.0, 2.0]
+  let edgeActivatedGraph = updateEdges alexNet (activations alexNet [1.0, 2.0])
+  let dot = (showDot . fglToDotString . emap (\e -> printf "%d" $ length e) . nmap (show . P)) edgeActivatedGraph
   writeFile "file.dot" dot
   _ <- system "dot -Tpng -ofile.png file.dot"
   _ <- system "open file.png &"
   return ()
 
-alexNet :: G
+alexNet :: G ()
 alexNet = toGraph $ do
   inputId <- layer Input
   (splitId, joinId) <- fork (replicate 2 alexNetColumn)
@@ -96,13 +120,13 @@ alexNet = toGraph $ do
     where
       alexNetColumn = [
            Convolution, ReLU, MaxPool,
-           Convolution, ReLU, MaxPool,
-           Convolution, ReLU,
-           Convolution, ReLU,
+           -- Convolution, ReLU, MaxPool,
+           -- Convolution, ReLU,
+           -- Convolution, ReLU,
            Convolution, ReLU, MaxPool]
 
       classifierColumn = [
-           DropOut, FC [[1]], ReLU,
-           DropOut, FC [[1]], ReLU,
+           -- DropOut, FC [[1]], ReLU,
+           -- DropOut, FC [[1]], ReLU,
            FC [[1]], LogSoftMax
           ]

@@ -1,0 +1,67 @@
+* =FreeLearning.hs=
+This is an experiment in writing a clean DSL for deep neural networks
+in Haskell. There are two approaches
+
+- =Free.hs=, where a free monad is built and interpreted and
+  visualized.
+  
+  For example,
+  
+  #+begin_src haskell
+    alexNet :: NN ()
+    -- alexNetColumns = Free (Split $ replicate 2 $ Free (Node ReLU (Free End)))
+    alexNet = Free (Split $ replicate 2 (features >> classifier))
+
+    classifier :: NN ()
+    classifier = mapM_ layer [
+                   DropOut, FC [[1]], ReLU,
+                   DropOut, FC [[1]], ReLU,
+                   FC [[1]], LogSoftMax]
+
+    features :: NN ()
+    features = mapM_ layer [
+                   Convolution, ReLU, MaxPool,
+                   Convolution, ReLU, MaxPool,
+                   Convolution, ReLU,
+                   Convolution, ReLU,
+                   Convolution, ReLU, MaxPool]
+
+    slp :: [[Float]] -> NN ()
+    slp weights = do
+        layer (FC weights)
+        layer ReLU
+
+    mlp :: [[[Float]]] -> NN ()
+    mlp = mapM_ slp
+  #+end_src
+
+
+- =Graph.hs=, where the network structure is built by constructing a
+  DFG in the State monad.
+  
+  For example,
+  
+  #+begin_src haskell
+    alexNet :: G
+    alexNet = toGraph $ do
+      inputId <- layer Input
+      (splitId, joinId) <- fork (replicate 2 alexNetColumn)
+      edge inputId splitId
+
+      (classifierId, _) <- column classifierColumn
+      edge joinId classifierId
+      return ()
+        where
+          alexNetColumn = [
+               Convolution, ReLU, MaxPool,
+               Convolution, ReLU, MaxPool,
+               Convolution, ReLU,
+               Convolution, ReLU,
+               Convolution, ReLU, MaxPool]
+
+          classifierColumn = [
+               DropOut, FC [[1]], ReLU,
+               DropOut, FC [[1]], ReLU,
+               FC [[1]], LogSoftMax
+              ]
+  #+end_src

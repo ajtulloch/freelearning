@@ -41,12 +41,12 @@ column layers = do
 
 fork :: [[Layer]] -> GS (Int, Int)
 fork columns = do
-  splitId <- layer Fork
+  splitId <- layer $ DPFork (length columns)
 
   ids <- mapM column columns
   mapM_ (edge splitId . fst) ids
 
-  joinId <- layer Join
+  joinId <- layer $ DPJoin (length columns)
   mapM_ ((`edge` joinId) . snd) ids
 
   return (splitId, joinId)
@@ -73,10 +73,10 @@ setOutgoingActivations graph gid outputAct acts = foldl step acts outputIds wher
 updateEdges :: G b -> EdgeActivations a -> G a
 updateEdges graph acts = gmap update graph
     where
-      update (pre, gid, l, suc) = (newpre, gid, l, newsucc)
+      update (pres, gid, l, sucs) = (newpre, gid, l, newsucc)
           where
-            newpre = map (\(a, preId) -> (actAt acts preId gid, preId)) pre
-            newsucc = map (\(a, succId) -> (actAt acts gid succId, succId)) suc
+            newpre = map (\(_, preId) -> (actAt acts preId gid, preId)) pres
+            newsucc = map (\(_, succId) -> (actAt acts gid succId, succId)) sucs
 
 actAt :: EdgeActivations a -> Node -> Node -> a
 actAt acts from to = fromJust (HM.lookup (from, to) acts)
@@ -92,41 +92,39 @@ fpropAll :: Layer -> [[Float]] -> [Float]
 fpropAll l inputs = fprop l (concat inputs)
 
 sizeAll :: Layer -> [[Int]] -> [Int]
-sizeAll l inputs = trace (printf "L: %s, I: %s" (show (P l)) (show inputs)) $ outputSize l (length inputs) (head inputs)
+sizeAll l inputs = trace (printf "L: %s, I: %s" (show (P l)) (show inputs)) $
+                   outputSize l $ go inputs
+    where
+      go [] = []
+      go (x:_) = x
 
 simpleNet :: G ()
 simpleNet = toGraph $
             column [Input,
-                    FC [[1.0, 1.0], [-1.0, -1.0]], ReLU,
-                    FC [[1.0, 1.0], [-1.0, -1.0]], ReLU,
-                    LogSoftMax]
+                    FC [[1.0, 1.0], [-1.0, -1.0]], Pointwise ReLU,
+                    FC [[1.0, 1.0], [-1.0, -1.0]], Pointwise ReLU,
+                    Criterion LogSoftMax]
 
--- graphToDot :: G a -> (a -> String) -> String
-
--- main :: IO ()
-main = do
-  -- mapM_ (print . first P) $ activations alexNet [1.0, 2.0]
-  let edgeActivatedGraph = updateEdges alexNet (activations alexNet fpropAll [1.0, 2.0])
-  let dot = (showDot . fglToDotString . emap (\e -> printf "%d" $ length e) . nmap (show . P)) edgeActivatedGraph
+visualize :: b -> (Layer -> [b] -> b) -> (b -> String) -> IO ()
+visualize initial propFn printFn = do
+  let edgeActivatedGraph = updateEdges alexNet (activations alexNet propFn initial)
+  let dot = (showDot . fglToDotString . emap printFn . nmap (show . P)) edgeActivatedGraph
   writeFile "file.dot" dot
-  _ <- system "dot -Tpng -ofile.png file.dot"
-  _ <- system "open file.png &"
+  void $ system "dot -Tpng -ofile.png file.dot"
+  void $ system "open file.png &"
   return ()
 
-main2 = do
-  -- mapM_ (print . first P) $ activations alexNet [1.0, 2.0]
-  let edgeActivatedGraph = updateEdges alexNet (activations alexNet sizeAll [2])
-  let dot = (showDot . fglToDotString . emap (\e -> printf "%s" $ (show . product) e) . nmap (show . P)) edgeActivatedGraph
-  writeFile "file.dot" dot
-  _ <- system "dot -Tpng -ofile.png file.dot"
-  _ <- system "open file.png &"
-  return ()
+main1 :: IO ()
+main1 = visualize [1.0, 2.0] fpropAll (printf "%s" . show)
 
+main2 :: IO ()
+main2 = visualize [200] sizeAll (printf "%s" . show . product)
 
 alexNet :: G ()
 alexNet = toGraph $ do
   inputId <- layer Input
   (splitId, joinId) <- fork (replicate 2 alexNetColumn)
+
   edge inputId splitId
 
   (classifierId, _) <- column classifierColumn
@@ -134,14 +132,15 @@ alexNet = toGraph $ do
   return ()
     where
       alexNetColumn = [
-           Convolution, ReLU, MaxPool,
-           -- Convolution, ReLU, MaxPool,
-           -- Convolution, ReLU,
-           -- Convolution, ReLU,
-           Convolution, ReLU, MaxPool]
+           Convolution, Pointwise ReLU, MaxPool,
+           -- Convolution, Pointwise ReLU, MaxPool,
+           -- Convolution, Pointwise ReLU,
+           -- Convolution, Pointwise ReLU,
+           Convolution, Pointwise ReLU, MaxPool]
 
       classifierColumn = [
            -- DropOut, FC [[1]], ReLU,
            -- DropOut, FC [[1]], ReLU,
-           FC [[1]], LogSoftMax
+           FC [[1] | _ <- [1..100]], Criterion LogSoftMax
           ]
+

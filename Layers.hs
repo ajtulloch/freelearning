@@ -2,46 +2,53 @@ module Layers where
 
 import           Text.Printf
 
+data Pointwise = ReLU | DropOut deriving (Show)
+data Criterion = LogSoftMax deriving (Show)
+
 data Layer = FC [[Float]]
-           | Input
+           | Pointwise Pointwise
+           | Criterion Criterion
            | Convolution
-           | Join
-           | DropOut
-           | LogSoftMax
-           | Fork
+           | DPJoin Int
+           | Input
+           | DPFork Int
            | MaxPool
-           | ReLU
            deriving (Show)
 
 fprop :: Layer -> [Float] -> [Float]
 fprop (FC weights) input = map (dot input) weights
     where
       dot a b = sum (zipWith (*) a b)
+fprop (Pointwise DropOut) input = input
+fprop (Pointwise ReLU) input = map (max 0) input
 
-fprop ReLU input = map (max 0) input
-fprop Input input = input
 fprop Convolution input = input
-fprop DropOut input = input
-fprop LogSoftMax input = input
-fprop Fork input = input
+fprop (DPFork _) input = input
+fprop Input input = input
+fprop (DPJoin _) input = input
+fprop (Criterion LogSoftMax) input = input
 fprop MaxPool input = input
-fprop Join input = input
 
-outputSize :: Layer -> Int -> [Int] -> [Int]
-outputSize (FC weights) n [_] = [n * length weights]
-outputSize (FC _)  _ _ = error "Must be one or two dimensional input"
+outputSize :: Layer -> [Int] -> [Int]
+outputSize (FC weights) [b, _] = [b, length weights]
+outputSize (FC weights) [_] = [length weights]
+outputSize (Pointwise _) inputSize = inputSize
+outputSize Convolution inputSize = inputSize
+outputSize (DPJoin n) (x:xs) = (n * x):xs
+outputSize (Criterion LogSoftMax) [b, _] = [b, 1]
+outputSize (Criterion LogSoftMax) [_] = [1]
+outputSize (DPFork n) (x:xs) = outer:xs
+    where
+      outer :: Int
+      outer = ceiling ((fromIntegral x :: Double) / fromIntegral n)
+outputSize MaxPool inputSize = inputSize
+outputSize Input inputSize = inputSize
+outputSize layer inputSize =
+    error $ printf "Layer: %s, Unhandled size: %s" (show layer) (show inputSize)
 
-outputSize ReLU n inputSize = map (* n) inputSize
-outputSize Convolution n inputSize = map (* n) inputSize
-outputSize Join n inputSize = map (* n) inputSize
-outputSize LogSoftMax n inputSize = map (* n) inputSize
-outputSize Fork n inputSize = map (* n) inputSize
-outputSize MaxPool n inputSize = map (* n) inputSize
-outputSize Input n inputSize = map (* n) inputSize
-outputSize DropOut n inputSize = map (* n) inputSize
 
-data PrintLayer = P Layer
+data PrettyLayer = P Layer
 
-instance Show PrintLayer where
+instance Show PrettyLayer where
     show (P (FC weights)) = printf "FC(%d)" $ length weights
     show (P l) = show l

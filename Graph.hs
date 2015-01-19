@@ -20,6 +20,7 @@ import           Text.Printf
 type G = Gr Layer
 type GS = State (Int, G ())
 
+-- DSL
 layer :: Layer -> GS Int
 layer l = do
   (gid, s) <- get
@@ -41,22 +42,48 @@ column layers = do
 
 fork :: [[Layer]] -> GS (Int, Int)
 fork columns = do
-  splitId <- layer $ DPFork (length columns)
+  splitId <- layer $ ModelParallelFork (length columns)
 
   ids <- mapM column columns
   mapM_ (edge splitId . fst) ids
 
-  joinId <- layer $ DPJoin (length columns)
+  joinId <- layer $ ModelParallelJoin (length columns)
   mapM_ ((`edge` joinId) . snd) ids
 
   return (splitId, joinId)
 
+-- | DSL Example
+alexNet :: G ()
+alexNet = toGraph $ do
+  inputId <- layer Input
+  (splitId, joinId) <- fork (replicate 2 alexNetColumn)
+
+  edge inputId splitId
+
+  (classifierId, _) <- column classifierColumn
+  edge joinId classifierId
+    where
+      alexNetColumn = [
+           Convolution, Pointwise ReLU, MaxPool MP{steps=[2]},
+           -- Convolution, Pointwise ReLU, MaxPool,
+           -- Convolution, Pointwise ReLU,
+           -- Convolution, Pointwise ReLU,
+           Convolution, Pointwise ReLU, MaxPool MP{steps=[2]}]
+
+      classifierColumn = [
+           -- DropOut, FC [[1]], ReLU,
+           -- DropOut, FC [[1]], ReLU,
+           FC [[1] | _ <- [1..5::Integer]],
+           Criterion LogSoftMax
+          ]
+
 toGraph :: GS a -> G ()
 toGraph f = snd (execState f (0, empty))
 
-type EdgeActivations a = HM.HashMap (Int, Int) a
 
-updateActivation :: G b -> (Layer -> [a] -> a) -> Node -> State (EdgeActivations a) ()
+type EdgeMap a = HM.HashMap (Node, Node) a
+
+updateActivation :: G b -> (Layer -> [a] -> a) -> Node -> State (EdgeMap a) ()
 updateActivation graph f gid = do
   let inputIds = pre graph gid
   let l = fromJust (lab graph gid)
@@ -65,12 +92,12 @@ updateActivation graph f gid = do
   let outputAct = f l inputActs
   put (setOutgoingActivations graph gid outputAct acts)
 
-setOutgoingActivations :: G b -> Node -> a -> EdgeActivations a -> EdgeActivations a
+setOutgoingActivations :: G b -> Node -> a -> EdgeMap a -> EdgeMap a
 setOutgoingActivations graph gid outputAct acts = foldl step acts outputIds where
     outputIds = suc graph gid
     step m outputId = HM.insert (gid, outputId) outputAct m
 
-updateEdges :: G b -> EdgeActivations a -> G a
+updateEdges :: G b -> EdgeMap a -> G a
 updateEdges graph acts = gmap update graph
     where
       update (pres, gid, l, sucs) = (newpre, gid, l, newsucc)
@@ -78,10 +105,10 @@ updateEdges graph acts = gmap update graph
             newpre = map (\(_, preId) -> (actAt acts preId gid, preId)) pres
             newsucc = map (\(_, succId) -> (actAt acts gid succId, succId)) sucs
 
-actAt :: EdgeActivations a -> Node -> Node -> a
+actAt :: EdgeMap a -> Node -> Node -> a
 actAt acts from to = fromJust (HM.lookup (from, to) acts)
 
-activations :: G b -> (Layer -> [a] -> a) -> a -> EdgeActivations a
+activations :: G b -> (Layer -> [a] -> a) -> a -> EdgeMap a
 activations graph f input = execState (mapM step layers) initialState
     where
       (inputLayer:layers) = topsort graph
@@ -119,28 +146,3 @@ main1 = visualize [1.0, 2.0] fpropAll (printf "%s" . show)
 
 main2 :: IO ()
 main2 = visualize [200] sizeAll (printf "%s" . show . product)
-
-alexNet :: G ()
-alexNet = toGraph $ do
-  inputId <- layer Input
-  (splitId, joinId) <- fork (replicate 2 alexNetColumn)
-
-  edge inputId splitId
-
-  (classifierId, _) <- column classifierColumn
-  edge joinId classifierId
-  return ()
-    where
-      alexNetColumn = [
-           Convolution, Pointwise ReLU, MaxPool,
-           -- Convolution, Pointwise ReLU, MaxPool,
-           -- Convolution, Pointwise ReLU,
-           -- Convolution, Pointwise ReLU,
-           Convolution, Pointwise ReLU, MaxPool]
-
-      classifierColumn = [
-           -- DropOut, FC [[1]], ReLU,
-           -- DropOut, FC [[1]], ReLU,
-           FC [[1] | _ <- [1..100]], Criterion LogSoftMax
-          ]
-

@@ -27,18 +27,18 @@ fprop Fork input = input
 fprop MaxPool input = input
 fprop Join input = input
 
-outputSize :: Layer -> [Int] -> [Int]
-outputSize (FC weights) [input] = [length weights]
-outputSize (FC _) _ = error "Must be one or two dimensional input"
+outputSize :: Layer -> Int -> [Int] -> [Int]
+outputSize (FC weights) n [_] = [n * length weights]
+outputSize (FC _)  _ _ = error "Must be one or two dimensional input"
 
-outputSize ReLU inputSize = inputSize
-outputSize Convolution inputSize = inputSize
-outputSize Join inputSize = inputSize
-outputSize LogSoftMax inputSize = inputSize
-outputSize Fork inputSize = inputSize
-outputSize MaxPool inputSize = inputSize
-outputSize Input inputSize = inputSize
-outputSize DropOut inputSize = inputSize
+outputSize ReLU n inputSize = map (* n) inputSize
+outputSize Convolution n inputSize = map (* n) inputSize
+outputSize Join n inputSize = map (* n) inputSize
+outputSize LogSoftMax n inputSize = map (* n) inputSize
+outputSize Fork n inputSize = map (* n) inputSize
+outputSize MaxPool n inputSize = map (* n) inputSize
+outputSize Input n inputSize = map (* n) inputSize
+outputSize DropOut n inputSize = map (* n) inputSize
 
 data PrintLayer = P Layer
 

@@ -34,26 +34,32 @@ end = liftF End
 
 alexNet :: NN ()
 -- alexNetColumns = Free (Split $ replicate 2 $ Free (Node ReLU (Free End)))
-alexNet = Free (Split $ replicate 2 (features >> classifier))
+alexNet = Free (Split $ replicate 2 (mapM_ layer features >> mapM_ layer classifier))
 
-classifier :: NN ()
-classifier = mapM_ layer [
-               DropOut, FC [[1]], ReLU,
-               DropOut, FC [[1]], ReLU,
-               FC [[1]], LogSoftMax]
 
-features :: NN ()
-features = mapM_ layer [
-               Convolution, ReLU, MaxPool,
-               Convolution, ReLU, MaxPool,
-               Convolution, ReLU,
-               Convolution, ReLU,
-               Convolution, ReLU, MaxPool]
+features :: [Layer]
+features = [
+           Convolution CP{nOutput=10, kernel=[CD{width=3, stride=2}]},
+           Pointwise ReLU, MaxPool MP{steps=[2]},
+           -- Convolution, Pointwise ReLU, MaxPool,
+           -- Convolution, Pointwise ReLU,
+           -- Convolution, Pointwise ReLU,
+           Convolution CP{nOutput=10, kernel=[CD{width=3, stride=2}]},
+           Pointwise ReLU, MaxPool MP{steps=[2]}]
+
+classifier :: [Layer]
+classifier = [
+           Reshape,
+           -- DropOut, FullyConnected [[1]], ReLU,
+           -- DropOut, FullyConnected [[1]], ReLU,
+           FullyConnected FC{nHidden=5, weights=[[1] | _ <- [1..5::Integer]]},
+           Criterion LogSoftMax
+          ]
 
 slp :: [[Float]] -> NN ()
-slp weights = do
-    layer (FC weights)
-    layer ReLU
+slp weights_ = do
+    layer (FullyConnected FC{nHidden=length weights_, weights=weights_})
+    layer (Pointwise ReLU)
 
 mlp :: [[[Float]]] -> NN ()
 mlp = mapM_ slp
@@ -69,8 +75,8 @@ activations _ (Pure _) = return ()
 
 randomWeights
   :: (MonadRandom m, Random a, Fractional a) => Int -> Int -> m [[a]]
-randomWeights nInput nOutput = do
-  rs <- replicateM nOutput (getRandomRs (-1.0, 1.0))
+randomWeights nInput nOutput_ = do
+  rs <- replicateM nOutput_ (getRandomRs (-1.0, 1.0))
   return $ map (take nInput) rs
 
 generateMlp :: NN ()

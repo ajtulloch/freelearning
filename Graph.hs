@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 module Graph where
 
 import           Control.Monad.State.Strict
@@ -10,30 +8,29 @@ import           Data.Graph.Inductive.Graph
 import           Data.Graph.Inductive.PatriciaTree
 import           Data.Graph.Inductive.Query
 import qualified Data.HashMap.Strict               as HM
+import           Data.List
 import           Data.Maybe
-import           System.Process
-
 import           Debug.Trace
 import           Layers
+import           System.Process
 import           Text.Printf
 
 type G = Gr Layer
 type GS = State (Int, G ())
 
--- DSL
 layer :: Layer -> GS Int
 layer l = do
   (gid, s) <- get
   put (gid + 1, insNode (gid, l) s)
   return gid
 
-edge :: Int -> Int -> GS ()
-edge from to = modify (second (insEdge (from, to, ())))
+connect :: Int -> Int -> GS ()
+connect from to = modify (second (insEdge (from, to, ())))
 
 column :: [Layer] -> GS (Int, Int)
 column layers = do
   ids <- mapM layer layers
-  mapM_ (uncurry edge) (pairs ids)
+  mapM_ (uncurry connect) (pairs ids)
 
   return (head ids, last ids)
     where
@@ -45,37 +42,53 @@ fork columns = do
   splitId <- layer $ ModelParallelFork (length columns)
 
   ids <- mapM column columns
-  mapM_ (edge splitId . fst) ids
+  mapM_ (connect splitId . fst) ids
 
   joinId <- layer $ ModelParallelJoin (length columns)
-  mapM_ ((`edge` joinId) . snd) ids
+  mapM_ ((`connect` joinId) . snd) ids
 
   return (splitId, joinId)
 
 -- | DSL Example
 alexNet :: G ()
 alexNet = toGraph $ do
+  -- Create the input layer
   inputId <- layer Input
-  (splitId, joinId) <- fork (replicate 2 alexNetColumn)
 
-  edge inputId splitId
+  -- Feature mapping, split across feature maps
+  (splitId, joinId) <- fork (replicate 2 features)
 
-  (classifierId, _) <- column classifierColumn
-  edge joinId classifierId
+  -- Connect the input to the start of the split
+  connect inputId splitId
+
+  -- Create the classifier
+  (classifierId, _) <- column classifier
+
+  -- Connect the join of the features to the classifier
+  connect joinId classifierId
     where
-      alexNetColumn = [
-           Convolution, Pointwise ReLU, MaxPool MP{steps=[2]},
+      features = [
+           Convolution CP{nOutput=96, kernel=replicate 2 CD{width=11, stride=4}},
+           Pointwise ReLU,
+           MaxPool MP{steps=[2, 2]},
            -- Convolution, Pointwise ReLU, MaxPool,
            -- Convolution, Pointwise ReLU,
            -- Convolution, Pointwise ReLU,
-           Convolution, Pointwise ReLU, MaxPool MP{steps=[2]}]
+           Convolution CP{nOutput=1024, kernel=replicate 2 CD{width=3, stride=1}},
+           Pointwise ReLU, MaxPool MP{steps=[2, 2]}]
 
-      classifierColumn = [
-           -- DropOut, FC [[1]], ReLU,
-           -- DropOut, FC [[1]], ReLU,
-           FC [[1] | _ <- [1..5::Integer]],
+      classifier = [
+           Reshape,
+           Pointwise DropOut,
+           FullyConnected FC{nHidden=3072, weights=[[]]},
+           Pointwise ReLU,
+           Pointwise DropOut,
+           FullyConnected FC{nHidden=4096, weights=[[]]},
+           Pointwise ReLU,
+           FullyConnected FC{nHidden=1000, weights=[[]]},
            Criterion LogSoftMax
           ]
+
 
 toGraph :: GS a -> G ()
 toGraph f = snd (execState f (0, empty))
@@ -125,24 +138,31 @@ sizeAll l inputs = trace (printf "L: %s, I: %s" (show (P l)) (show inputs)) $
       go [] = []
       go (x:_) = x
 
+fullyConnected :: Int -> Int -> Layer
+fullyConnected nHidden_ nInput =
+    FullyConnected FC{nHidden=nHidden_, weights=[[1 | _ <- [1..nInput]] | _ <- [1..nHidden_]]}
+
 simpleNet :: G ()
 simpleNet = toGraph $
             column [Input,
-                    FC [[1.0, 1.0], [-1.0, -1.0]], Pointwise ReLU,
-                    FC [[1.0, 1.0], [-1.0, -1.0]], Pointwise ReLU,
+                    fullyConnected 2 2,
+                    Pointwise ReLU,
+                    fullyConnected 2 2,
+                    Pointwise ReLU,
                     Criterion LogSoftMax]
 
-visualize :: b -> (Layer -> [b] -> b) -> (b -> String) -> IO ()
-visualize initial propFn printFn = do
-  let edgeActivatedGraph = updateEdges alexNet (activations alexNet propFn initial)
+visualize :: G a ->  b -> (Layer -> [b] -> b) -> (b -> String) -> IO ()
+visualize graph initial propFn printFn = do
+  let edgeActivatedGraph = updateEdges graph (activations graph propFn initial)
   let dot = (showDot . fglToDotString . emap printFn . nmap (show . P)) edgeActivatedGraph
   writeFile "file.dot" dot
   void $ system "dot -Tpng -ofile.png file.dot"
   void $ system "open file.png &"
   return ()
 
-main1 :: IO ()
-main1 = visualize [1.0, 2.0] fpropAll (printf "%s" . show)
 
-main2 :: IO ()
-main2 = visualize [200] sizeAll (printf "%s" . show . product)
+alexNetActivations :: IO ()
+alexNetActivations = visualize alexNet [1.0, 2.0] fpropAll (printf "%s" . show)
+
+alexNetCommunication :: IO ()
+alexNetCommunication = visualize alexNet [4, 256, 256] sizeAll (\e -> printf "%s (%s)" (show (product e)) (intercalate "x" (map show e)))

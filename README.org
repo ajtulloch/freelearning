@@ -14,9 +14,9 @@ in Haskell. There are two approaches
 
     classifier :: NN ()
     classifier = mapM_ layer [
-                   DropOut, FC [[1]], ReLU,
-                   DropOut, FC [[1]], ReLU,
-                   FC [[1]], LogSoftMax]
+                   DropOut, FullyConnected [[1]], ReLU,
+                   DropOut, FullyConnected [[1]], ReLU,
+                   FullyConnected [[1]], LogSoftMax]
 
     features :: NN ()
     features = mapM_ layer [
@@ -28,7 +28,7 @@ in Haskell. There are two approaches
 
     slp :: [[Float]] -> NN ()
     slp weights = do
-        layer (FC weights)
+        layer (FullyConnected weights)
         layer ReLU
 
     mlp :: [[[Float]]] -> NN ()
@@ -46,10 +46,10 @@ in Haskell. There are two approaches
     alexNet = toGraph $ do
       inputId <- layer Input
       (splitId, joinId) <- fork (replicate 2 alexNetColumn)
-      edge inputId splitId
+      connect inputId splitId
 
       (classifierId, _) <- column classifierColumn
-      edge joinId classifierId
+      connect joinId classifierId
       return ()
         where
           alexNetColumn = [
@@ -60,8 +60,12 @@ in Haskell. There are two approaches
                Convolution, ReLU, MaxPool]
 
           classifierColumn = [
-               DropOut, FC [[1]], ReLU,
-               DropOut, FC [[1]], ReLU,
-               FC [[1]], LogSoftMax
+               DropOut, FullyConnected [[1]], ReLU,
+               DropOut, FullyConnected [[1]], ReLU,
+               FullyConnected [[1]], LogSoftMax
               ]
   #+end_src
+** Example
+#+ATTR_HTML: :width 400px
+[[http://i.imgur.com/w7RTLWk.png]]
+

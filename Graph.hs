@@ -49,6 +49,15 @@ fork columns = do
 
   return (splitId, joinId)
 
+-- lstm :: GS ()
+-- lstm = do
+--   return ()
+--   lstmInput <-
+--   inputId <- layer (LSTM Input)
+--   outputId <- layer (LSTM Output)
+
+
+
 -- | DSL Example
 alexNet :: G ()
 alexNet = toGraph $ do
@@ -62,10 +71,14 @@ alexNet = toGraph $ do
   connect inputId splitId
 
   -- Create the classifier
-  (classifierId, _) <- column classifier
+  (classifierStart, classifierEnd) <- column classifier
 
   -- Connect the join of the features to the classifier
-  connect joinId classifierId
+  connect joinId classifierStart
+
+  outputId <- layer Output
+  connect classifierEnd outputId
+
     where
       features = [
            Convolution CP{nOutput=96, kernel=replicate 2 CD{width=11, stride=4}},
@@ -96,19 +109,30 @@ toGraph f = snd (execState f (0, empty))
 
 type EdgeMap a = HM.HashMap (Node, Node) a
 
-updateActivation :: G b -> (Layer -> [a] -> a) -> Node -> State (EdgeMap a) ()
+initializeMap :: G b -> Node -> a -> EdgeMap a
+initializeMap graph root output = foldl step HM.empty (suc graph root)
+  where
+    step m outputId = HM.insert (root, outputId) output m
+
+updateActivation :: (Show a) => G b -> (Layer -> [a] -> [a]) -> Node -> State (EdgeMap a) ()
 updateActivation graph f gid = do
   let inputIds = pre graph gid
   let l = fromJust (lab graph gid)
   acts <- get
   let inputActs = map (\k -> fromJust (HM.lookup (k, gid) acts)) inputIds
-  let outputAct = f l inputActs
-  put (setOutgoingActivations graph gid outputAct acts)
 
-setOutgoingActivations :: G b -> Node -> a -> EdgeMap a -> EdgeMap a
-setOutgoingActivations graph gid outputAct acts = foldl step acts outputIds where
-    outputIds = suc graph gid
-    step m outputId = HM.insert (gid, outputId) outputAct m
+  let outputIds = suc graph gid
+  let outputActs = f l inputActs
+  when (length outputIds /= length outputActs) $
+       case l of
+         Output -> return ()
+         _ -> error $ printf "Mismatched output: %s, %s, %s" (show l) (show outputIds) (show outputActs)
+
+  let updated = foldl step acts (zip outputIds outputActs)
+  put updated
+    where
+      step m (outputId, outputAct) = HM.insert (gid, outputId) outputAct m
+
 
 updateEdges :: G b -> EdgeMap a -> G a
 updateEdges graph acts = gmap update graph
@@ -121,22 +145,20 @@ updateEdges graph acts = gmap update graph
 actAt :: EdgeMap a -> Node -> Node -> a
 actAt acts from to = fromJust (HM.lookup (from, to) acts)
 
-activations :: G b -> (Layer -> [a] -> a) -> a -> EdgeMap a
-activations graph f input = execState (mapM step layers) initialState
+activations :: (Show a) => G b -> (Layer -> [a] -> [a]) -> a -> EdgeMap a
+activations graph f input = execState (mapM step layers) (initializeMap graph root input)
     where
-      (inputLayer:layers) = topsort graph
+      (root:layers) = topsort graph
       step = updateActivation graph f
-      initialState = setOutgoingActivations graph inputLayer input HM.empty
 
-fpropAll :: Layer -> [[Float]] -> [Float]
-fpropAll l inputs = fprop l (concat inputs)
+fpropAll :: Layer -> [Tensor] -> [Tensor]
+fpropAll l inputs = map (fprop l) inputs
 
-sizeAll :: Layer -> [[Int]] -> [Int]
-sizeAll l inputs = trace (printf "L: %s, I: %s" (show (P l)) (show inputs)) $
-                   outputSize l $ go inputs
-    where
-      go [] = []
-      go (x:_) = x
+
+sizeAll :: Layer -> [[Int]] -> [[Int]]
+sizeAll l@(ModelParallelFork n) input = (replicate n) $ outputSize l (head input)
+sizeAll l@(ModelParallelJoin _) input = [outputSize l (head input)]
+sizeAll l inputs = trace (printf "L: %s, I: %s" (show (P l)) (show inputs)) $  map (outputSize l) inputs
 
 fullyConnected :: Int -> Int -> Layer
 fullyConnected nHidden_ nInput =
@@ -151,7 +173,7 @@ simpleNet = toGraph $
                     Pointwise ReLU,
                     Criterion LogSoftMax]
 
-visualize :: G a ->  b -> (Layer -> [b] -> b) -> (b -> String) -> IO ()
+visualize :: (Show a, Show b) => G a ->  b -> (Layer -> [b] -> [b]) -> (b -> String) -> IO ()
 visualize graph initial propFn printFn = do
   let edgeActivatedGraph = updateEdges graph (activations graph propFn initial)
   let dot = (showDot . fglToDotString . emap printFn . nmap (show . P)) edgeActivatedGraph
@@ -159,7 +181,6 @@ visualize graph initial propFn printFn = do
   void $ system "dot -Tpng -ofile.png file.dot"
   void $ system "open file.png &"
   return ()
-
 
 alexNetActivations :: IO ()
 alexNetActivations = visualize alexNet [1.0, 2.0] fpropAll (printf "%s" . show)

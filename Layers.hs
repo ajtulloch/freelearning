@@ -3,25 +3,31 @@ module Layers where
 
 import           Data.List
 import           Text.Printf
+
 data Pointwise = ReLU | DropOut deriving (Show)
 data Criterion = LogSoftMax deriving (Show)
+data LS = LSInput | LSOutput | LSOutputGate | LSForgetGate | LSInputGate | LSCell deriving (Show)
 
 data CD = CD { width :: Int, stride :: Int} deriving (Show)
 data CP = CP { nOutput :: Int, kernel :: [CD]} deriving (Show)
 data MP = MP { steps :: [Int] } deriving (Show)
 data FC = FC { nHidden :: Int, weights :: [[Float]] } deriving (Show)
+
+type Tensor = [Float]
+
 data Layer = FullyConnected FC
            | Pointwise Pointwise
            | Criterion Criterion
            | Convolution CP
-           | ModelParallelJoin Int
-           | Input
-           | ModelParallelFork Int
+           | ModelParallelJoin Int | ModelParallelFork Int
+           | Input | Output
            | Reshape
            | MaxPool MP
+           | LSTM LS
            deriving (Show)
 
-fprop :: Layer -> [Float] -> [Float]
+
+fprop :: Layer -> Tensor -> Tensor
 fprop (FullyConnected FC{..}) input = map (dot input) weights
     where
       dot a b = sum (zipWith (*) a b)
@@ -35,12 +41,14 @@ fprop (ModelParallelJoin _) input = input
 fprop (Criterion LogSoftMax) input = input
 fprop (MaxPool _) input = input
 fprop (Reshape) input = input
-
+fprop Output input = input
 divUp :: (Integral a, Integral b, Integral c) => a -> b -> c
 divUp num denom = ceiling ((fromIntegral num :: Double) / fromIntegral denom)
 
 -- Given *one* of the inputs on an edge, for *one* batch size, what
 -- output is created on *one* of the edges?
+
+
 outputSize :: Layer -> [Int] -> [Int]
 outputSize (FullyConnected FC{..}) [_] = [nHidden]
 outputSize (Pointwise _) inputSize = inputSize
@@ -55,17 +63,15 @@ outputSize layer@(Convolution CP{..}) inputSize = setOutputs (reverse (go (rever
 outputSize (ModelParallelJoin n) (x:xs) = (n * x):xs
 outputSize (Criterion LogSoftMax) [_] = [1]
 outputSize Reshape inputSize = [product inputSize]
-outputSize (ModelParallelFork n) (x:xs) = outer:xs
-    where
-      outer :: Int
-      outer = x `divUp` n
+outputSize (ModelParallelFork n) (x:xs) = x `divUp` n:xs
 outputSize layer@(MaxPool MP{..}) inputSize = reverse (go (reverse inputSize))
     where
       go revInputSize
           | length steps > length revInputSize = outputError layer inputSize
           | otherwise = zipWith divUp revInputSize steps ++ drop (length steps) revInputSize
-
+outputSize Output inputSize = inputSize
 outputSize Input inputSize = inputSize
+
 -- Catch all
 outputSize layer inputSize = outputError layer inputSize
 

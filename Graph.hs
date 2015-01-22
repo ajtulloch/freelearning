@@ -17,32 +17,32 @@ import           Layers
 import           System.Process
 import           Text.Printf
 
-type G = Gr Layer
-type GS = State (Int, G ())
+type G a = State (Int, Gr a ())
+type GS = G Layer
 
-layer :: Layer -> GS Int
+layer :: a -> State (Node, Gr a b) Node
 layer l = do
   (gid, s) <- get
   put (gid + 1, insNode (gid, l) s)
   return gid
 
-(>->) :: Int -> Int -> GS ()
+(>->) :: Int -> Int -> G a ()
 (>->) from to = modify (second (insEdge (from, to, ())))
 
-column :: [Layer] -> GS (Node, Node)
+column :: [a] -> G a (Node, Node)
 column = stack . map (single . layer)
 
-single :: GS Node -> GS (Node, Node)
+single :: G a Node -> G a (Node, Node)
 single l = do {x <- l; return (x, x)}
 
-stack :: [GS (Node, Node)] -> GS (Node, Node)
+stack :: [G a (Node, Node)] -> G a (Node, Node)
 stack columns = sequence columns >>= foldM1 merge
   where
     foldM1 _ [] = error "foldM1" "empty list"
     foldM1 f (x:xs) = foldM f x xs
     merge (bottom, midBelow) (midAbove, top) = midBelow >-> midAbove >> return (bottom, top)
 
-(>>->>) :: Node -> GS (Node, Node) -> GS Node
+(>>->>) :: Node -> G a (Node, Node) -> G a Node
 from >>->> above = do
   (bottom, top) <- above
   from >-> bottom
@@ -53,7 +53,7 @@ pairs :: [b] -> [(b, b)]
 pairs [] = []
 pairs xs = zip xs (tail xs)
 
-fork :: [[Layer]] -> GS (Int, Int)
+fork :: [[Layer]] -> G Layer (Int, Int)
 fork columns = do
   splitId <- layer $ ModelParallelFork (length columns)
 
@@ -88,13 +88,13 @@ lstmUnfolded n = do
 viewBuilder :: GS a -> IO ()
 viewBuilder = view . toGraph
 
-view :: DynGraph gr => gr Layer b -> IO ()
+view ::  Gr Layer b -> IO ()
 view g = do
   let dot = (showDot . fglToDotString . emap (const "") . nmap (show . P)) g
   printDot dot
 
 -- | DSL Example
-alexNetG :: G ()
+alexNetG :: Gr Layer ()
 alexNetG = toGraph alexNet
 
 alexNet :: GS (Int, Int)
@@ -134,18 +134,18 @@ alexNet = do
           ]
 
 
-toGraph :: GS a -> G ()
+toGraph :: G a b -> Gr a ()
 toGraph f = snd (execState f (0, empty))
 
 
 type EdgeMap a = HM.HashMap (Node, Node) a
 
-initializeMap :: G b -> Node -> a -> EdgeMap a
+initializeMap  :: Graph gr => gr a b -> Node -> v -> EdgeMap v
 initializeMap graph root output = foldl step HM.empty (suc graph root)
   where
     step m outputId = HM.insert (root, outputId) output m
 
-updateActivation :: (Show a) => G b -> (Layer -> [a] -> [a]) -> Node -> State (EdgeMap a) ()
+updateActivation :: (Graph gr) => gr a b -> (a -> [v] -> [v]) -> Node -> State (EdgeMap v) ()
 updateActivation graph f gid = do
   let inputIds = pre graph gid
   let l = fromJust (lab graph gid)
@@ -154,10 +154,7 @@ updateActivation graph f gid = do
 
   let outputIds = suc graph gid
   let outputActs = f l inputActs
-  when (length outputIds /= length outputActs) $
-       case l of
-         Output -> return ()
-         _ -> error $ printf "Mismatched output: %s, %s, %s" (show l) (show outputIds) (show outputActs)
+  when (not (null outputIds) && length outputIds /= length outputActs) $ error "Mismatch"
 
   let updated = foldl step acts (zip outputIds outputActs)
   put updated
@@ -165,7 +162,7 @@ updateActivation graph f gid = do
       step m (outputId, outputAct) = HM.insert (gid, outputId) outputAct m
 
 
-updateEdges :: G b -> EdgeMap a -> G a
+updateEdges :: DynGraph gr => gr c b -> EdgeMap d -> gr c d
 updateEdges graph acts = gmap update graph
     where
       update (pres, gid, l, sucs) = (newpre, gid, l, newsucc)
@@ -176,7 +173,7 @@ updateEdges graph acts = gmap update graph
 actAt :: EdgeMap a -> Node -> Node -> a
 actAt acts from to = fromJust (HM.lookup (from, to) acts)
 
-activations :: (Show a) => G b -> (Layer -> [a] -> [a]) -> a -> EdgeMap a
+activations :: Graph gr => gr a b -> (a -> [v] -> [v]) -> v -> EdgeMap v
 activations graph f input = execState (mapM step layers) (initializeMap graph root input)
     where
       (root:layers) = topsort graph
@@ -194,7 +191,7 @@ fullyConnected :: Int -> Int -> Layer
 fullyConnected nHidden_ nInput =
     FullyConnected FC{nHidden=nHidden_, weights=[[1 | _ <- [1..nInput]] | _ <- [1..nHidden_]]}
 
-simpleNet :: G ()
+simpleNet :: Gr Layer ()
 simpleNet = toGraph $
             column [Input,
                     fullyConnected 2 2,
@@ -203,7 +200,7 @@ simpleNet = toGraph $
                     Pointwise ReLU,
                     Criterion LogSoftMax]
 
-visualize :: (Show a, Show b) => G a ->  b -> (Layer -> [b] -> [b]) -> (b -> String) -> IO ()
+visualize :: Gr Layer a -> b -> (Layer -> [b] -> [b]) -> (b -> String) -> IO ()
 visualize graph initial propFn printFn = do
   let edgeActivatedGraph = updateEdges graph (activations graph propFn initial)
   let dot = (showDot . fglToDotString . emap printFn . nmap (show . P)) edgeActivatedGraph

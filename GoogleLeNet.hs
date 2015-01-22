@@ -36,22 +36,33 @@ googleNet :: GS GoogLeNet
 googleNet = do
   input <- layer Input
 
-  middle <- input >>->> stack [
-          column initial,
-          single (layer $ pool Max 3),
-          inception,
-          inception,
-          single (layer $ pool Max 3),
-          inception]
+  middle <- return input
+           >>->> column initial
+           >>->> (single . layer) (pool Max 3)
+           >>->> inception
+           >>->> inception
+           >>->> ((single . layer) (pool Max 3))
+           >>->> inception
 
   -- Middle classifier
-  middleOutput <- middle >>->> column classifier
+  middleOutput <- return middle
+                 >>->> column classifier
 
-  upper <- middle >>->> stack [inception, inception, inception]
+  upper <- return middle
+          >>->> inception
+          >>->> inception
+          >>->> inception
+          >>->> inception
 
   -- upper classifier
-  upperOutput <- upper >>->> column classifier
-  finalOutput <- upper >>->> stack [inception, inception, inception, column finalClassifier]
+  upperOutput <- return upper
+                >>->> column classifier
+
+  finalOutput <- return upper
+                >>->> inception
+                >>->> inception
+                >>->> inception
+                >>->> column finalClassifier
 
   return GoogLeNet{input, middleOutput, upperOutput, finalOutput}
       where

@@ -42,8 +42,9 @@ stack columns = sequence columns >>= foldM1 merge
     foldM1 f (x:xs) = foldM f x xs
     merge (bottom, midBelow) (midAbove, top) = midBelow >-> midAbove >> return (bottom, top)
 
-(>>->>) :: Node -> G a (Node, Node) -> G a Node
-from >>->> above = do
+(>>->>) :: G a Node -> G a (Node, Node) -> G a Node
+base >>->> above = do
+  from <- base
   (bottom, top) <- above
   from >-> bottom
   return top
@@ -70,7 +71,6 @@ data LSTMG = LSTMG { input, output, cell :: Node }
 lstm :: GS LSTMG
 lstm = do
   config@LSTMG{..} <- LSTMG <$> go LSInput <*> go LSOutput <*> go LSCell
-
   input >-> cell
   cell >-> output
 
@@ -103,10 +103,10 @@ alexNet = do
   inputId <- layer Input
 
   -- Feature mapping, split across feature maps
-  joinId <- inputId >>->> fork (replicate 2 features)
+  joinId <- return inputId >>->> fork (replicate 2 features)
 
   -- Create the classifier
-  outputId <- joinId >>->> column classifier
+  outputId <- return joinId >>->> column classifier
 
   return (inputId, outputId)
     where

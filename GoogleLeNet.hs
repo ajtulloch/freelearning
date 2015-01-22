@@ -1,7 +1,6 @@
-{-# LANGUAGE NamedFieldPuns      #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE NamedFieldPuns #-}
 module GoogLeNet where
-import           Control.Monad.State.Strict
+
 import           Data.Graph.Inductive.Graph
 import           Graph                      hiding (input)
 import           Layers
@@ -31,12 +30,7 @@ inception = do
                    [conv 4 1 1, conv 4 5 5],
                    [pool Max 2, conv 4 1 1]]
 
-data GoogLeNet = GoogLeNet {
-      input        :: Node,
-      middleOutput :: Node,
-      upperOutput  :: Node,
-      finalOutput  :: Node
-    }
+data GoogLeNet = GoogLeNet { input, middleOutput, upperOutput, finalOutput :: Node }
 
 googleNet :: GS GoogLeNet
 googleNet = do

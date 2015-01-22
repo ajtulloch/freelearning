@@ -65,7 +65,7 @@ fork columns = do
 
   return (splitId, joinId)
 
-data LSTMG = LSTMG {input  :: Node, output :: Node, cell :: Node}
+data LSTMG = LSTMG { input, output, cell :: Node }
 
 lstm :: GS LSTMG
 lstm = do
@@ -154,7 +154,7 @@ updateActivation graph f gid = do
 
   let outputIds = suc graph gid
   let outputActs = f l inputActs
-  when (not (null outputIds) && length outputIds /= length outputActs) $ error "Mismatch"
+  when (length outputIds /= length outputActs) $ error $ printf "Mismatch: %d %d" (length outputIds) (length outputActs)
 
   let updated = foldl step acts (zip outputIds outputActs)
   put updated
@@ -185,6 +185,7 @@ fpropAll l = map (fprop l)
 sizeAll :: Layer -> [[Int]] -> [[Int]]
 sizeAll l@(ModelParallelFork n) input = replicate n $ outputSize l (head input)
 sizeAll l@(ModelParallelJoin _) input = [outputSize l (head input)]
+sizeAll Output _ = []
 sizeAll l inputs = trace (printf "L: %s, I: %s" (show (P l)) (show inputs)) $  map (outputSize l) inputs
 
 fullyConnected :: Int -> Int -> Layer

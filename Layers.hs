@@ -34,6 +34,7 @@ fprop (FullyConnected FC{..}) input = map (dot input) weights
       dot a b = sum (zipWith (*) a b)
 fprop (Pointwise DropOut) input = input
 fprop (Pointwise ReLU) input = map (max 0) input
+fprop (Pointwise LocalResponseNormalize) input = input
 fprop (LSTM _) input = input
 fprop (Convolution CP{..}) input = input
 fprop (ModelParallelFork _) input = input
@@ -43,6 +44,10 @@ fprop (Criterion LogSoftMax) input = input
 fprop (MaxPool _) input = input
 fprop (Reshape) input = input
 fprop Output input = input
+fprop (Split _) input = input
+fprop (Concat _) input = input
+fprop (AveragePool _) input = input
+
 divUp :: (Integral a, Integral b, Integral c) => a -> b -> c
 divUp num denom = ceiling ((fromIntegral num :: Double) / fromIntegral denom)
 

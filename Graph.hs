@@ -5,7 +5,6 @@ import           Control.Monad.State.Strict
 
 import           Control.Applicative               hiding (empty)
 import           Control.Arrow
-import           Data.Graph.Inductive.Basic
 import           Data.Graph.Inductive.Dot
 import           Data.Graph.Inductive.Graph
 import           Data.Graph.Inductive.PatriciaTree

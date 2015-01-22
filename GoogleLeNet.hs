@@ -1,3 +1,4 @@
+{-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 module GoogLeNet where
 import           Control.Applicative
@@ -8,7 +9,7 @@ import           Data.List
 import           Data.Maybe
 import           Data.Monoid
 import           Debug.Trace
-import           Graph
+import           Graph                             hiding (input)
 import           Layers
 
 convolution :: Int -> Int -> Int -> Layer
@@ -19,14 +20,15 @@ convolution nOutput_ width_ stride_ = Convolution CP{
 inception :: GS (Node, Node)
 inception = do
   splitId <- layer (Split 4)
-  ids <- mapM buildColumn columns
   concatId <- layer (Concat 4)
 
+  columnIds <- mapM buildColumn columns
+
   -- split joins at the bottom
-  mapM_ (splitId >->) (map head ids)
+  mapM_ ((splitId >->) . head) columnIds
 
   -- concat joins at the top
-  mapM_ (>-> concatId) (map last ids)
+  mapM_ ((>-> concatId) . last) columnIds
 
   return (splitId, concatId)
       where
@@ -35,7 +37,6 @@ inception = do
               layerIds <- mapM layer column_
               mapM_ (uncurry (>->)) (pairs layerIds)
               return layerIds
-        n :: Int
         n = 4
         columns = [[convolution n 1 1],
                    [convolution n 1 1, convolution n 3 3],
@@ -47,16 +48,25 @@ maxPool step = MaxPool MP{steps=replicate 2 step}
 avgPool step = AveragePool MP{steps=replicate 2 step}
 
 single :: GS Node -> GS (Node, Node)
-single l = do
-  x <- l
-  return (x, x)
+single l = do {x <- l; return (x, x)}
+
+newtype C = C { unC :: GS (Maybe (Node, Node)) }
+
+instance Monoid C where
+    mempty = C $ return Nothing
+    C{unC=l} `mappend` C{unC=r} = C $ do
+                      x <- l
+                      y <- r
+                      case (x, y) of
+                        (Nothing, Nothing) -> return Nothing
+                        (Just _, Nothing) -> return x
+                        (Nothing, Just _) -> return y
+                        (Just a, Just b) -> do {x <- jointwo a b; return $ Just x}
 
 joined :: [GS (Node, Node)] -> GS (Node, Node)
 joined columns = do
   bounds <- sequence columns
   go bounds
-  traceShowM $ bounds
-  -- mapM_ (uncurry (>->)) bounds
   return ((fst . head) bounds, (snd . last) bounds)
       where
         go [] = return ()
@@ -65,15 +75,20 @@ joined columns = do
 
 
 
+jointwo :: (Node, Node) -> (Node, Node) -> GS (Node, Node)
+jointwo (bottom, midBelow) (midAbove, top) = do
+  midBelow >-> midAbove
+  return (bottom, top)
 
 (>>->>) :: Node -> GS (Node, Node) -> GS Node
-(>>->>) from column = do
+from >>->> column = do
   (bottom, top) <- column
   from >-> bottom
   return top
 
 data GoogLeNet = GoogLeNet {input :: Node, midOutput :: Node, upperOutput :: Node, finalOutput :: Node}
 
+googleNet :: GS GoogLeNet
 googleNet = do
   input <- layer Input
   mid <- input >>->> joined [
@@ -88,12 +103,12 @@ googleNet = do
 
   -- upper classifier
   upperOutput <- upper >>->> column classifier
-  final <- upper >>->> joined [inception, inception, inception]
-  finalOutput <- final >>->> column [avgPool 7, fullyConnected 100 100, Criterion LogSoftMax]
-  return $ GoogLeNet input midOutput upperOutput finalOutput
+  finalOutput <- upper >>->> joined [inception, inception, inception, column finalClassifier]
+  return GoogLeNet{input, midOutput, upperOutput, finalOutput}
       where
         initial = [convolution 1 1 1, maxPool 2, Pointwise LocalResponseNormalize,
                    convolution 1 1 1, convolution 1 3 3, Pointwise LocalResponseNormalize]
         classifier = [avgPool 5, convolution 1 1 1,
-              fullyConnected 100 100, fullyConnected 100 100,
-              Criterion LogSoftMax]
+                      fullyConnected 100 100, fullyConnected 100 100,
+                      Criterion LogSoftMax]
+        finalClassifier = [avgPool 7, fullyConnected 100 100, Criterion LogSoftMax]

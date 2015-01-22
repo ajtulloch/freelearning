@@ -109,12 +109,12 @@ alexNet = do
       features = [
            Convolution CP{nOutput=96, kernel=replicate 2 CD{width=11, stride=4}},
            Pointwise ReLU,
-           MaxPool MP{steps=[2, 2]},
+           Pool Max PP{steps=[2, 2]},
            -- Convolution, Pointwise ReLU, MaxPool,
            -- Convolution, Pointwise ReLU,
            -- Convolution, Pointwise ReLU,
            Convolution CP{nOutput=1024, kernel=replicate 2 CD{width=3, stride=1}},
-           Pointwise ReLU, MaxPool MP{steps=[2, 2]}]
+           Pointwise ReLU, Pool Max PP{steps=[2, 2]}]
 
       classifier = [
            Reshape,

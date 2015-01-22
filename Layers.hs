@@ -6,11 +6,12 @@ import           Text.Printf
 
 data Pointwise = ReLU | DropOut | LocalResponseNormalize deriving (Show)
 data Criterion = LogSoftMax deriving (Show)
+data Pool = Avg | Max deriving (Show)
 data LS = LSInput | LSOutput | LSOutputGate | LSForgetGate | LSInputGate | LSCell deriving (Show)
 
 data CD = CD { width :: Int, stride :: Int} deriving (Show)
 data CP = CP { nOutput :: Int, kernel :: [CD]} deriving (Show)
-data MP = MP { steps :: [Int] } deriving (Show)
+data PP = PP { steps :: [Int] } deriving (Show)
 data FC = FC { nHidden :: Int, weights :: [[Float]] } deriving (Show)
 
 type Tensor = [Float]
@@ -23,10 +24,9 @@ data Layer = FullyConnected FC
            | Split Int | Concat Int
            | Input | Output
            | Reshape
-           | MaxPool MP | AveragePool MP -- TODO: unify these like Pointwi
+           | Pool Pool PP
            | LSTM LS
            deriving (Show)
-
 
 fprop :: Layer -> Tensor -> Tensor
 fprop (FullyConnected FC{..}) input = map (dot input) weights
@@ -41,12 +41,11 @@ fprop (ModelParallelFork _) input = input
 fprop Input input = input
 fprop (ModelParallelJoin _) input = input
 fprop (Criterion LogSoftMax) input = input
-fprop (MaxPool _) input = input
+fprop (Pool _ _) input = input
 fprop (Reshape) input = input
 fprop Output input = input
 fprop (Split _) input = input
 fprop (Concat _) input = input
-fprop (AveragePool _) input = input
 
 divUp :: (Integral a, Integral b, Integral c) => a -> b -> c
 divUp num denom = ceiling ((fromIntegral num :: Double) / fromIntegral denom)
@@ -70,7 +69,7 @@ outputSize (ModelParallelJoin n) (x:xs) = (n * x):xs
 outputSize (Criterion LogSoftMax) [_] = [1]
 outputSize Reshape inputSize = [product inputSize]
 outputSize (ModelParallelFork n) (x:xs) = x `divUp` n:xs
-outputSize layer@(MaxPool MP{..}) inputSize = reverse (go (reverse inputSize))
+outputSize layer@(Pool _ PP{..}) inputSize = reverse (go (reverse inputSize))
     where
       go revInputSize
           | length steps > length revInputSize = outputError layer inputSize
@@ -89,9 +88,18 @@ newtype PrettyLayer = P Layer
 
 instance Show PrettyLayer where
     show (P (FullyConnected FC{..})) = printf "FullyConnected %d" nHidden
-    show (P (MaxPool MP{..})) = printf "MaxPool %s" $ intercalate "x" (map show steps)
+    show (P (Pool p PP{..})) = printf "%s %s" (show p) (intercalate "x" (map show steps))
     show (P (Convolution CP{..})) = printf "Convolution %sx%s" (show nOutput) kernels
         where
           kernels :: String
           kernels = intercalate "x" (map (show . width) kernel)
     show (P l) = show l
+
+
+conv :: Int -> Int -> Int -> Layer
+conv nOutput_ width_ stride_ = Convolution CP{
+               nOutput=nOutput_,
+               kernel=replicate 2 CD{width=width_, stride=stride_}}
+
+pool :: Pool -> Int -> Layer
+pool p step = Pool p PP{steps=replicate 2 step}

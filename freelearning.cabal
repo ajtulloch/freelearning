@@ -61,19 +61,13 @@ library
   -- Other library packages from which modules are imported.
   build-depends:       MonadRandom >= 0.3.0.1
                      , base >=4.7 && <4.8
-                     , diagrams
-                     , diagrams-lib
-                     , diagrams-svg
                      , fgl
-                     , free
                      , mtl
-                     , graphviz
-                     , transformers
                      , fgl-visualize
+                     , cublas
+                     , cuda
                      , unordered-containers
                      , process
-                     , text
-                     , vector
 
 
   

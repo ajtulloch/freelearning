@@ -4,7 +4,6 @@ module GoogLeNet where
 import           Data.Graph.Inductive.Graph
 import           Graph                      hiding (input)
 import           Layers
-
 inception :: GS (Node, Node)
 inception = do
   splitId <- layer (Split 4)
@@ -35,13 +34,12 @@ data GoogLeNet = GoogLeNet { input, middleOutput, upperOutput, finalOutput :: No
 googleNet :: GS GoogLeNet
 googleNet = do
   input <- layer Input
-
   middle <- return input
            >>->> column initial
            >>->> (single . layer) (pool Max 3)
            >>->> inception
            >>->> inception
-           >>->> ((single . layer) (pool Max 3))
+           >>->> (single . layer) (pool Max 3)
            >>->> inception
 
   -- Middle classifier

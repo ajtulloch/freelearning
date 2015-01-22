@@ -4,7 +4,7 @@ module Layers where
 import           Data.List
 import           Text.Printf
 
-data Pointwise = ReLU | DropOut deriving (Show)
+data Pointwise = ReLU | DropOut | LocalResponseNormalize deriving (Show)
 data Criterion = LogSoftMax deriving (Show)
 data LS = LSInput | LSOutput | LSOutputGate | LSForgetGate | LSInputGate | LSCell deriving (Show)
 
@@ -20,9 +20,10 @@ data Layer = FullyConnected FC
            | Criterion Criterion
            | Convolution CP
            | ModelParallelJoin Int | ModelParallelFork Int
+           | Split Int | Concat Int
            | Input | Output
            | Reshape
-           | MaxPool MP
+           | MaxPool MP | AveragePool MP -- TODO: unify these like Pointwi
            | LSTM LS
            deriving (Show)
 
@@ -33,7 +34,7 @@ fprop (FullyConnected FC{..}) input = map (dot input) weights
       dot a b = sum (zipWith (*) a b)
 fprop (Pointwise DropOut) input = input
 fprop (Pointwise ReLU) input = map (max 0) input
-
+fprop (LSTM _) input = input
 fprop (Convolution CP{..}) input = input
 fprop (ModelParallelFork _) input = input
 fprop Input input = input

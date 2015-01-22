@@ -51,6 +51,7 @@ library
   GHC-Options: -Wall
   exposed-modules:     Main
   
+
   -- Modules included in this library but not exported.
   -- other-modules:       
   
@@ -71,6 +72,7 @@ library
                      , fgl-visualize
                      , unordered-containers
                      , process
+                     , text
                      , vector
 
 

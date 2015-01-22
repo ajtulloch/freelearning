@@ -1,8 +1,11 @@
+{-# LANGUAGE RecordWildCards #-}
 module Graph where
 
 import           Control.Monad.State.Strict
 
+import           Control.Applicative               hiding (empty)
 import           Control.Arrow
+import           Data.Graph.Inductive.Basic
 import           Data.Graph.Inductive.Dot
 import           Data.Graph.Inductive.Graph
 import           Data.Graph.Inductive.PatriciaTree
@@ -24,61 +27,85 @@ layer l = do
   put (gid + 1, insNode (gid, l) s)
   return gid
 
-connect :: Int -> Int -> GS ()
-connect from to = modify (second (insEdge (from, to, ())))
+(>->) :: Int -> Int -> GS ()
+(>->) from to = modify (second (insEdge (from, to, ())))
 
 column :: [Layer] -> GS (Int, Int)
 column layers = do
   ids <- mapM layer layers
-  mapM_ (uncurry connect) (pairs ids)
-
+  mapM_ (uncurry (>->)) (pairs ids)
   return (head ids, last ids)
-    where
-      pairs [] = []
-      pairs xs = zip (init xs) (tail xs)
+
+
+pairs :: [b] -> [(b, b)]
+pairs [] = []
+pairs xs = zip xs (tail xs)
 
 fork :: [[Layer]] -> GS (Int, Int)
 fork columns = do
   splitId <- layer $ ModelParallelFork (length columns)
 
   ids <- mapM column columns
-  mapM_ (connect splitId . fst) ids
+  mapM_ ((splitId >->) . fst) ids
 
   joinId <- layer $ ModelParallelJoin (length columns)
-  mapM_ ((`connect` joinId) . snd) ids
+  mapM_ ((>-> joinId) . snd) ids
 
   return (splitId, joinId)
 
--- lstm :: GS ()
--- lstm = do
---   return ()
---   lstmInput <-
---   inputId <- layer (LSTM Input)
---   outputId <- layer (LSTM Output)
+data LSTMG = LSTMG {input  :: Node, output :: Node, cell :: Node}
+
+lstm :: GS LSTMG
+lstm = do
+  config@LSTMG{..} <- LSTMG <$> go LSInput <*> go LSOutput <*> go LSCell
+
+  input >-> cell
+  cell >-> output
+
+  return config
+    where
+       go = layer . LSTM
+
+lstmUnfolded :: Int -> GS [LSTMG]
+lstmUnfolded n = do
+  lstms <- replicateM n lstm
+  mapM_ (\(prev, next) -> cell prev >-> cell next) (pairs lstms)
+  return lstms
 
 
+viewBuilder :: GS a -> IO ()
+viewBuilder = view . toGraph
+
+view :: DynGraph gr => gr Layer b -> IO ()
+view g = do
+  let dot = (showDot . fglToDotString . emap (const "") . nmap (show . P)) g
+  printDot dot
 
 -- | DSL Example
-alexNet :: G ()
-alexNet = toGraph $ do
+alexNetG :: G ()
+alexNetG = toGraph alexNet
+
+alexNet :: GS (Int, Int)
+alexNet = do
   -- Create the input layer
   inputId <- layer Input
 
   -- Feature mapping, split across feature maps
   (splitId, joinId) <- fork (replicate 2 features)
 
-  -- Connect the input to the start of the split
-  connect inputId splitId
+  -- connect the input to the start of the split
+  inputId >-> splitId
 
   -- Create the classifier
   (classifierStart, classifierEnd) <- column classifier
 
-  -- Connect the join of the features to the classifier
-  connect joinId classifierStart
+  -- (>->) the join of the features to the classifier
+  joinId >-> classifierStart
 
   outputId <- layer Output
-  connect classifierEnd outputId
+  classifierEnd >-> outputId
 
+  return (inputId, outputId)
     where
       features = [
            Convolution CP{nOutput=96, kernel=replicate 2 CD{width=11, stride=4}},
@@ -152,11 +179,10 @@ activations graph f input = execState (mapM step layers) (initializeMap graph ro
       step = updateActivation graph f
 
 fpropAll :: Layer -> [Tensor] -> [Tensor]
-fpropAll l inputs = map (fprop l) inputs
-
+fpropAll l = map (fprop l)
 
 sizeAll :: Layer -> [[Int]] -> [[Int]]
-sizeAll l@(ModelParallelFork n) input = (replicate n) $ outputSize l (head input)
+sizeAll l@(ModelParallelFork n) input = replicate n $ outputSize l (head input)
 sizeAll l@(ModelParallelJoin _) input = [outputSize l (head input)]
 sizeAll l inputs = trace (printf "L: %s, I: %s" (show (P l)) (show inputs)) $  map (outputSize l) inputs
 
@@ -177,13 +203,16 @@ visualize :: (Show a, Show b) => G a ->  b -> (Layer -> [b] -> [b]) -> (b -> Str
 visualize graph initial propFn printFn = do
   let edgeActivatedGraph = updateEdges graph (activations graph propFn initial)
   let dot = (showDot . fglToDotString . emap printFn . nmap (show . P)) edgeActivatedGraph
+  printDot dot
+
+printDot :: String -> IO ()
+printDot dot = do
   writeFile "file.dot" dot
   void $ system "dot -Tpng -ofile.png file.dot"
   void $ system "open file.png &"
-  return ()
 
 alexNetActivations :: IO ()
-alexNetActivations = visualize alexNet [1.0, 2.0] fpropAll (printf "%s" . show)
+alexNetActivations = visualize alexNetG [1.0, 2.0] fpropAll (printf "%s" . show)
 
 alexNetCommunication :: IO ()
-alexNetCommunication = visualize alexNet [4, 256, 256] sizeAll (\e -> printf "%s (%s)" (show (product e)) (intercalate "x" (map show e)))
+alexNetCommunication = visualize alexNetG [4, 256, 256] sizeAll (\e -> printf "%s (%s)" (show (product e)) (intercalate "x" (map show e)))

@@ -29,11 +29,24 @@ layer l = do
 (>->) :: Int -> Int -> GS ()
 (>->) from to = modify (second (insEdge (from, to, ())))
 
-column :: [Layer] -> GS (Int, Int)
-column layers = do
-  ids <- mapM layer layers
-  mapM_ (uncurry (>->)) (pairs ids)
-  return (head ids, last ids)
+column :: [Layer] -> GS (Node, Node)
+column = stack . map (single . layer)
+
+single :: GS Node -> GS (Node, Node)
+single l = do {x <- l; return (x, x)}
+
+stack :: [GS (Node, Node)] -> GS (Node, Node)
+stack columns = sequence columns >>= foldM1 merge
+  where
+    foldM1 _ [] = error "foldM1" "empty list"
+    foldM1 f (x:xs) = foldM f x xs
+    merge (bottom, midBelow) (midAbove, top) = midBelow >-> midAbove >> return (bottom, top)
+
+(>>->>) :: Node -> GS (Node, Node) -> GS Node
+from >>->> above = do
+  (bottom, top) <- above
+  from >-> bottom
+  return top
 
 
 pairs :: [b] -> [(b, b)]
@@ -90,19 +103,10 @@ alexNet = do
   inputId <- layer Input
 
   -- Feature mapping, split across feature maps
-  (splitId, joinId) <- fork (replicate 2 features)
-
-  -- connect the input to the start of the split
-  inputId >-> splitId
+  joinId <- inputId >>->> fork (replicate 2 features)
 
   -- Create the classifier
-  (classifierStart, classifierEnd) <- column classifier
-
-  -- (>->) the join of the features to the classifier
-  joinId >-> classifierStart
-
-  outputId <- layer Output
-  classifierEnd >-> outputId
+  outputId <- joinId >>->> column classifier
 
   return (inputId, outputId)
     where
@@ -125,7 +129,8 @@ alexNet = do
            FullyConnected FC{nHidden=4096, weights=[[]]},
            Pointwise ReLU,
            FullyConnected FC{nHidden=1000, weights=[[]]},
-           Criterion LogSoftMax
+           Criterion LogSoftMax,
+           Output
           ]
 
 

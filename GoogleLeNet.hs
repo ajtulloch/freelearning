@@ -6,22 +6,6 @@ import           Data.Graph.Inductive.Graph
 import           Graph                      hiding (input)
 import           Layers
 
-single :: GS Node -> GS (Node, Node)
-single l = do {x <- l; return (x, x)}
-
-stack :: [GS (Node, Node)] -> GS (Node, Node)
-stack columns = sequence columns >>= foldM1 merge
-  where
-    foldM1 _ [] = error "foldM1" "empty list"
-    foldM1 f (x:xs) = foldM f x xs
-    merge (bottom, midBelow) (midAbove, top) = midBelow >-> midAbove >> return (bottom, top)
-
-(>>->>) :: Node -> GS (Node, Node) -> GS Node
-from >>->> above = do
-  (bottom, top) <- above
-  from >-> bottom
-  return top
-
 inception :: GS (Node, Node)
 inception = do
   splitId <- layer (Split 4)
